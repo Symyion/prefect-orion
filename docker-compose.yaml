@@ -4,12 +4,11 @@ networks:
   prefect:
     name: prefect
 
-
 services:
   # --------------------------------------#
   #               Postgres                #
   # --------------------------------------#
-  postgres:
+  prefect-postgres:
     image: postgres:14
     command:
       - postgres
@@ -26,8 +25,7 @@ services:
       test: pg_isready -q -d $${POSTGRES_DB} -U $${POSTGRES_USER} | grep "accepting connections" || exit 1
       timeout: 2s
     ports:
-    - published: 5433
-      target: 5432
+    - 5433:5432
     restart: on-failure
     volumes:
       - ./volumes/postgres:/var/lib/postgresql/data
@@ -37,22 +35,24 @@ services:
   #             Prefect Server            #
   # --------------------------------------#
   prefect-server:
-    image: prefect-orion:beta8
-    command:
+    image: prefect-orion
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    command: 
       - prefect
       - orion
       - start
     ports:
       - 4200:4200
     depends_on:
-      postgres:
-        condition: service_started
+      - prefect-postgres
     volumes:
       - ${PWD}/volumes/prefect:/root/.prefect
       - ${PWD}/flows:/flows
     environment:
       PREFECT_ORION_API_HOST: 0.0.0.0
-      PREFECT_ORION_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:test-password@postgres:5432/prefect_server
+      PREFECT_ORION_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:test-password@prefect-postgres:5432/prefect_server
       PREFECT_ORION_ANALYTICS_ENABLED: "false"
       PREFECT_LOGGING_SERVER_LEVEL: WARNING
       PREFECT_API_URL: http://prefect-server:4200/api
@@ -62,15 +62,15 @@ services:
   #             Docker Agent              #
   # --------------------------------------#
   prefect-agent:
-    image: prefect-orion:beta8
+    image: prefect-orion
     command:
       - prefect
       - agent
       - start
       - ${QUEUE_ID:-}
     depends_on:
-      prefect-server:
-        condition: service_started
+      - prefect-server
+      - prefect-postgres
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
       PREFECT_LOGGING_LEVEL: DEBUG
@@ -92,9 +92,7 @@ services:
       - ./volumes/minio:/data
     command: server /data --console-address :9001
     ports:
-      - published: 9000
-        target: 9000
-      - published: 9001
-        target: 9001
+      - 9000:9000
+      - 9001:9001
     networks:
       - prefect
